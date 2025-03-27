@@ -13,6 +13,6 @@ urlpatterns = [
     path('compare-suppliers', views.compare_suppliers_view),
     path('auth/', include('djoser.urls')),
     path('auth/', include('djoser.urls.authtoken')),
-    path('auth/', include('djoser.urls.jwt')),  # /auth/jwt/create/, /auth/jwt/refresh/, /auth/jwt/verify/
-    path('drf-auth/', include('rest_framework.urls')), # оставить только для тестирования
+    path('auth/', include('djoser.urls.jwt')),
+    path('drf-auth/', include('rest_framework.urls')),
 ]
