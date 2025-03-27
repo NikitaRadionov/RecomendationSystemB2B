@@ -8,13 +8,10 @@ class UserManager(BaseUserManager):
             raise ValueError("Email is required")
         if not password:
             raise ValueError("Password is required")
-        
-        email = self.normalize_email(email)
-
         if role == "admin":
             raise ValueError("Cannot create an admin user this way")
 
-        user = self.model(email=email, role=role, is_staff=is_staff, is_superuser=is_superuser)
+        user = self.model(email=self.normalize_email(email), role=role, is_staff=is_staff, is_superuser=is_superuser)
         user.set_password(password)
         user.save(using=self._db)
         return user
@@ -23,7 +20,20 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault("role", "admin")
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
-        return self.create_user(email=email, role="admin", password=password, is_staff=True, is_superuser=True)
+
+        if extra_fields.get("role") != "admin":
+            raise ValueError("Superuser must have role=admin")
+
+        if not extra_fields.get("is_staff"):
+            raise ValueError("Superuser must have is_staff=True")
+
+        if not extra_fields.get("is_superuser"):
+            raise ValueError("Superuser must have is_superuser=True")
+
+        user = self.model(email=self.normalize_email(email), **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+        return user
 
 
 
