@@ -10,7 +10,7 @@ class OrderAPITest(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.customer = User.objects.create_user(email='test_customer@customer.com', password='my_purpose_is_customer', role='customer')
-        self.admin = User.objects.create_user(email='test_admin@admin.com', password='my_purpose_is_admin', role='admin')
+        self.admin = User.objects.create_superuser(email='test_admin@admin.com', password='my_purpose_is_admin', role='admin')
         self.order = Order.objects.create(customer=self.customer, okpd2='29.32', law_type='44_FZ', contract_amount=1000000, description='BMW Engine', delivery_region='Дагестан')
         
     def test_list_orders_authenticated(self):
@@ -39,7 +39,7 @@ class SupplierAPITest(TestCase):
         self.client = APIClient()
         self.supplier = User.objects.create_user(email='test_supplier@supplier.com', password='my_purpose_is_passwrd', role='supplier')
         self.customer = User.objects.create_user(email='test_customer@customer.com', password='my_purpose_is_customer', role='customer')
-        self.admin = User.objects.create_user(email='test_admin@admin.com', password='my_purpose_is_admin', role='admin')
+        self.admin = User.objects.create_superuser(email='test_admin@admin.com', password='my_purpose_is_admin', role='admin')
         self.supplier_obj = Supplier.objects.create(full_name='Test Supplier', short_name='TS', judicial_address='123 Street', registration_date='2024-01-01', okved='1234', inn='1234567890', ogrn='0987654321', index_due_diligence=5)
     
     def test_list_suppliers(self):
@@ -71,5 +71,5 @@ class SupplierRecomendationAPITest(TestCase):
     def test_supplier_recomendation(self):
         self.client.force_authenticate(user=self.customer)
         data = {'law_type': '44_FZ', 'okpd2': '29.32', 'contract_amount': 2000000, 'description': 'Mercedes Engine', 'delivery_region': 'Москва'}
-        response = self.client.post('/api/recomendation', data=data)
+        response = self.client.post('/api/recommendation', data=data)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
