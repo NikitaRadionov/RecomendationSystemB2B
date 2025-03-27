@@ -3,9 +3,6 @@ from django.conf import settings
 from .models import SupplierSubscription
 
 def send_order_notifications(order_details):
-    """
-    Отправляет уведомления только подписанным поставщикам.
-    """
     okpd2 = order_details.get('okpd2')
 
     subscribed_suppliers = SupplierSubscription.objects.filter(okpd2=okpd2).select_related('supplier')
