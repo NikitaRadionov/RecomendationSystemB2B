@@ -5,8 +5,10 @@ services:
     image: postgres:15
     container_name: my_database
     restart: always
-    env_file:
-      - .env
+    environment:
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: mypassword
+      POSTGRES_DB: myappdb
     ports:
       - "5432:5432"
     networks:
@@ -26,8 +28,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    env_file:
-      - .env
+    environment:
+      - DATABASE_URL=postgres://myuser:mypassword@db:5432/myappdb
     ports:
       - "8000:8000"
     networks:
