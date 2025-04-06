@@ -18,18 +18,18 @@ class OrderAdmin(admin.ModelAdmin):
 class SupplierAdmin(admin.ModelAdmin):
     list_display = ("full_name", "email", "inn", "ogrn")
     search_fields = ("full_name", "email", "inn", "ogrn")
-    list_filter = ("okved", "index_due_diligence_word")
+    list_filter = ("okved", "index_due_diligence")
 
 @admin.register(SupplierSubscription)
 class SupplierSubscriptionAdmin(admin.ModelAdmin):
-    list_display = ("supplier", "okpd2")  # Какие поля отображать в списке
-    search_fields = ("supplier__email", "okpd2")  # Поиск по email поставщика и коду ОКПД2
-    list_filter = ("okpd2",)  # Фильтр по ОКПД2
+    list_display = ("supplier", "okpd2")
+    search_fields = ("supplier__email", "okpd2")
+    list_filter = ("okpd2",)
 
 @admin.register(RecommendationHistory)
 class RecommendationHistoryAdmin(admin.ModelAdmin):
-    list_display = ("user", "timestamp", "top_only")  # Отображаемые колонки
-    search_fields = ("user__email",)  # Поиск по email пользователя
-    list_filter = ("top_only", "timestamp")  # Фильтрация по флагу top_only и дате
-    readonly_fields = ("timestamp", "request_data", "recommended_suppliers")  # Чтобы нельзя было редактировать
+    list_display = ("user", "timestamp", "top_only")
+    search_fields = ("user__email",)
+    list_filter = ("top_only", "timestamp")
+    readonly_fields = ("timestamp", "request_data", "recommended_suppliers")
 

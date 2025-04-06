@@ -9,9 +9,10 @@ class ApiConfig(AppConfig):
     def ready(self):
         base_dir = os.path.join(os.path.dirname(__file__), "model_files")
 
-        model_path = os.path.join(base_dir, "rec_model")
-        region_encoder_path = os.path.join(base_dir, "region_encoder.json")
-        supplier_encoder_path = os.path.join(base_dir, "supplier_encoder.json")
-        description_model_path = os.path.join(base_dir, "description_model.sav")
+        model_path = os.path.join(base_dir, 'rec_model_lightgbm.txt')
+        region_encoder_path = os.path.join(base_dir, 'region_encoder.json')
+        supplier_encoder_path = os.path.join(base_dir, 'supplier_encoder.json')
+        description_model_path = os.path.join(base_dir, 'description_model.sav')
+        supplier_data_path = os.path.join(base_dir, 'supplier_data.csv')
 
-        self.ml_model = MLModel(model_path, region_encoder_path, supplier_encoder_path, description_model_path)
+        self.ml_model = MLModel(model_path, region_encoder_path, supplier_encoder_path, description_model_path, supplier_data_path)

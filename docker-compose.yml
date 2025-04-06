@@ -16,8 +16,7 @@ services:
     networks:
       - mynetwork
     volumes:
-      - ./storage/init.sql:/docker-entrypoint-initdb.d/init.sql
-      - ./storage/dbdata:/var/lib/postgresql/data
+      - ./dbdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "myuser", "-d", "myappdb"]
       interval: 5s

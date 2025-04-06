@@ -6,7 +6,6 @@ from django.db.models import F
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.filters import SearchFilter, OrderingFilter
-from rest_framework.permissions import IsAuthenticatedOrReadOnly
 from rest_framework.views import APIView
 from rest_framework.generics import *
 
@@ -15,6 +14,7 @@ from .models import Supplier, Order, SupplierSubscription, User, RecommendationH
 from .permissions import IsSupplierPermission, IsCustomerPermission, IsCustomerReadOnlyPermission, IsAdminPermission
 
 from .utils import send_order_notifications
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,6 @@ list_create_order_view = ListCreateOrderAPIView.as_view()
 class RUDOrderAPIView(RetrieveUpdateDestroyAPIView):
     permission_classes = [IsCustomerPermission | IsAdminPermission]
     serializer_class = OrderSerializer
-    lookup_field = "id"
 
     def get_queryset(self):
         if self.request.user.is_staff:
@@ -89,12 +88,12 @@ class ListCreateSupplierAPIView(ListCreateAPIView):
     permission_classes = [IsCustomerReadOnlyPermission|IsSupplierPermission|IsAdminPermission]
     serializer_class = SupplierSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['full_name', 'short_name', 'judicial_address', 
+    filterset_fields = ['full_name', 'short_name', 
                         'registration_date', 'okved', 'inn', 'ogrn', 'index_due_diligence']
     
-    search_fields = ['full_name', 'short_name', 'judicial_address', 'email']
+    search_fields = ['full_name', 'short_name', 'inn', 'ogrn']
     
-    ordering_fields = ['registration_date', 'index_due_diligence', 'full_name']
+    ordering_fields = ['registration_date', 'index_due_diligence']
 
     def perform_create(self, serializer):
         try:
@@ -158,8 +157,21 @@ class SupplierRecommendationView(APIView):
                 logger.warning("Модель не смогла сделать предсказание")
                 return Response(status=status.HTTP_204_NO_CONTENT)
             
-
             suppliers = Supplier.objects.filter(inn__in=predictions)
+
+            if len(predictions) != len(suppliers):
+                corrected_data_predictions = []
+                for i in range(len(predictions)):
+                    inn = predictions[i]
+                    supplier = Supplier.objects.filter(inn=inn).first()
+
+                    while not supplier:
+                        inn = '0' + inn
+                        supplier = Supplier.objects.filter(inn=inn).first()
+
+                    corrected_data_predictions.append(inn)
+                
+                suppliers = Supplier.objects.filter(inn__in=corrected_data_predictions)
 
             if top_only:
                 suppliers = suppliers[:1]            
@@ -182,6 +194,75 @@ class SupplierRecommendationView(APIView):
 
 recomendation_view = SupplierRecommendationView.as_view()
 
+class OrderRecommendationView(APIView):
+    permission_classes = [IsCustomerPermission | IsAdminPermission]
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.ml_model = apps.get_app_config('api').ml_model
+
+    def get(self, request, pk):
+        try:
+            order = Order.objects.get(id=pk)
+
+            if not request.user.is_staff and order.customer != request.user:
+                return Response({"error": "Нет доступа к заказу"}, status=status.HTTP_403_FORBIDDEN)
+
+            data = {
+                "okpd2": order.okpd2,
+                "description": order.description,
+                "contract_amount": int(order.contract_amount),
+                "delivery_region": order.delivery_region,
+                "law_type": order.law_type,
+            }
+
+            top_only = bool(int(request.query_params.get("top_only", "0")))
+
+            logger.info(f"Запрос на рекомендации по заказу ID {pk} от пользователя {request.user}")
+
+            predictions = self.ml_model.predict(data)
+
+            if not predictions:
+                logger.warning("Модель не смогла сделать предсказание")
+                return Response(status=status.HTTP_204_NO_CONTENT)
+
+            suppliers = Supplier.objects.filter(inn__in=predictions)
+
+            if len(predictions) != len(suppliers):
+                corrected_data_predictions = []
+                for i in range(len(predictions)):
+                    inn = predictions[i]
+                    supplier = Supplier.objects.filter(inn=inn).first()
+
+                    while not supplier:
+                        inn = '0' + inn
+                        supplier = Supplier.objects.filter(inn=inn).first()
+
+                    corrected_data_predictions.append(inn)
+                
+                suppliers = Supplier.objects.filter(inn__in=corrected_data_predictions)
+
+            if top_only:
+                suppliers = suppliers[:1]
+
+            serializer = SupplierSerializer(suppliers, many=True)
+
+            RecommendationHistory.objects.create(
+                user=request.user,
+                request_data=data,
+                recommended_suppliers=[s.inn for s in suppliers],
+                top_only=top_only
+            )
+
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except Order.DoesNotExist:
+            return Response({"error": "Заказ не найден"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Ошибка при предсказании по заказу ID {pk}: {str(e)}", exc_info=True)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+order_recommendation_view = OrderRecommendationView.as_view()
 
 
 class SupplierSubscriptionListCreateView(ListCreateAPIView):
@@ -212,9 +293,9 @@ class SupplierSubscriptionListCreateView(ListCreateAPIView):
 list_create_subscription_view = SupplierSubscriptionListCreateView.as_view()
 
 
-class SupplierSubscriptionDeleteView(DestroyAPIView):
+class SupplierSubscriptionRetrieveDestroyView(RetrieveDestroyAPIView):
     serializer_class = SupplierSubscriptionSerializer
-    permission_classes = [IsSupplierPermission|IsAdminPermission]
+    permission_classes = [IsSupplierPermission | IsAdminPermission]
 
     def get_queryset(self):
         if self.request.user.is_staff:
@@ -222,56 +303,58 @@ class SupplierSubscriptionDeleteView(DestroyAPIView):
         return SupplierSubscription.objects.filter(supplier=self.request.user)
 
     def perform_destroy(self, instance):
+        id = instance.id
         try:
-            logger.info(f"Поставщик {self.request.user} удаляет подписку ID {instance.id}")
+            logger.info(f"{self.request.user} удаляет подписку ID {id}")
             instance.delete()
-            logger.info(f"Подписка ID {instance.id} успешно удалена")
+            logger.info(f"Подписка ID {id} успешно удалена")
         except Exception as e:
-            logger.error(f"Ошибка при удалении подписки ID {instance.id}: {str(e)}", exc_info=True)
+            logger.error(f"Ошибка при удалении подписки ID {id}: {str(e)}", exc_info=True)
             raise
 
-destroy_subscription_view = SupplierSubscriptionDeleteView.as_view()
+
+retrieve_destroy_subscription_view = SupplierSubscriptionRetrieveDestroyView.as_view()
 
 
 class CompareSuppliersView(APIView):
-    permission_classes = [IsCustomerPermission | IsAdminPermission]
-
     def get(self, request):
         supplier_inns = request.query_params.getlist("inn")
-        if not supplier_inns:
-            return Response({"error": "INN поставщиков не переданы"}, status=status.HTTP_400_BAD_REQUEST)
+        if len(supplier_inns) != 2:
+            return Response(
+                {"detail": "Для сравнения необходимо ровно два ИНН"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         compare_by = request.query_params.getlist("compare_by", ["index_due_diligence", "registration_date"])
 
-        if not supplier_inns:
-            return Response({"error": "Поставщики с такими INN не найдены"}, status=status.HTTP_404_NOT_FOUND)
-
         suppliers = Supplier.objects.filter(inn__in=supplier_inns)
+        logger.info(f"{suppliers.count()} - коичество поднятых записей.")
+        if suppliers.count() != 2:
+            return Response(
+                {"detail": "Не удалось найти двух поставщиков по переданным ИНН или переданы два одинаковых ИНН"},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
-        if not suppliers:
-            return Response({"error": "Поставщики с такими INN не найдены"}, status=status.HTTP_404_NOT_FOUND)
+        serializer = SupplierSerializer(suppliers, many=True)
+        comparison_results = serializer.data
 
-        comparison_results = []
-        for supplier in suppliers:
-            comparison_data = {
-                "inn": supplier.inn,
-                "full_name": supplier.full_name,
-                "registration_date": supplier.registration_date,
-                "index_due_diligence": supplier.index_due_diligence,
-                "okved": supplier.okved
-            }
+        def compare_key(supplier):
+            key = []
+            for field in compare_by:
+                value = supplier.get(field)
+                if field == "registration_date" and value:
+                    try:
+                        value = datetime.fromisoformat(value.replace("Z", "")).timestamp()
+                    except ValueError:
+                        value = float("inf")
+                elif value is None:
+                    value = float("-inf") if field == "index_due_diligence" else float("inf")
+                key.append(value)
+            return tuple(key)
 
-            comparison_results.append(comparison_data)
+        sorted_results = sorted(comparison_results, key=compare_key, reverse=True)
 
-        comparison_results = sorted(
-            comparison_results,
-            key=lambda x: tuple(F(field).desc() for field in compare_by),
-            reverse=True
-        )
-
-        logger.info(f"Сравнение поставщиков по INN: {supplier_inns} с критериями: {compare_by}")
-        
-        return Response(comparison_results)
+        return Response(sorted_results)
 
 compare_suppliers_view = CompareSuppliersView.as_view()
 

@@ -44,7 +44,7 @@ def load_initial_data(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("api", "0002_alter_order_okpd2"),
+        ("api", "0001_initial"),
     ]
 
     operations = [
