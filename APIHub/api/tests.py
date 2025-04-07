@@ -2,6 +2,8 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework import status
 from .models import Order, Supplier, User
+from django.core import mail
+from django.test import override_settings
 
 
 class OrderAPITest(TestCase):
@@ -63,7 +65,7 @@ class OrderAPITest(TestCase):
     def test_admin_can_see_all_orders(self):
         self.client.force_authenticate(user=self.admin)
         response = self.client.get('/api/orders')
-        self.assertEqual(response.data['count'], 5)
+        self.assertEqual(response.data['count'], Order.objects.count())
 
 
     def test_create_order(self):
@@ -286,3 +288,293 @@ class SupplierRecomendationAPITest(TestCase):
     def tearDown(self):
         Order.objects.all().delete()
         User.objects.all().delete()
+
+
+class ModelTests(TestCase):
+    def setUp(self):
+        self.customer = User.objects.create_user(
+            email='test@example.com',
+            password='testpass123',
+            role='customer'
+        )
+        self.supplier = User.objects.create_user(
+            email='supplier@example.com',
+            password='testpass123',
+            role='supplier'
+        )
+
+    def test_create_user(self):
+        """Test creating a new user"""
+        user = User.objects.create_user(
+            email='new@example.com',
+            password='testpass123',
+            role='customer'
+        )
+        self.assertEqual(user.email, 'new@example.com')
+        self.assertTrue(user.is_active)
+        self.assertFalse(user.is_staff)
+        self.assertEqual(user.role, 'customer')
+
+    def test_create_superuser(self):
+        """Test creating a new superuser"""
+        user = User.objects.create_superuser(
+            email='admin@example.com',
+            password='testpass123'
+        )
+        self.assertEqual(user.email, 'admin@example.com')
+        self.assertTrue(user.is_active)
+        self.assertTrue(user.is_staff)
+        self.assertTrue(user.is_superuser)
+        self.assertEqual(user.role, 'admin')
+
+    def test_create_order(self):
+        """Test creating a new order"""
+        order = Order.objects.create(
+            customer=self.customer,
+            description='Test order',
+            law_type='44_FZ',
+            contract_amount=100000.00,
+            okpd2='29.10',
+            delivery_region='Москва'
+        )
+        self.assertEqual(str(order), f'Order {order.id}')
+        self.assertEqual(order.customer, self.customer)
+        self.assertEqual(order.description, 'Test order')
+
+    def test_create_supplier(self):
+        """Test creating a new supplier"""
+        supplier = Supplier.objects.create(
+            user=self.supplier,
+            full_name='Test Supplier',
+            short_name='TS',
+            inn='1234567890',
+            ogrn='1234567890123',
+            okpo='12345678',
+            okved='29.10',
+            judicial_address='Test Address'
+        )
+        self.assertEqual(str(supplier), 'Test Supplier')
+        self.assertEqual(supplier.user, self.supplier)
+        self.assertEqual(supplier.inn, '1234567890')
+
+
+class SerializerTests(TestCase):
+    def setUp(self):
+        self.customer = User.objects.create_user(
+            email='test@example.com',
+            password='testpass123',
+            role='customer'
+        )
+        self.supplier = User.objects.create_user(
+            email='supplier@example.com',
+            password='testpass123',
+            role='supplier'
+        )
+        self.order = Order.objects.create(
+            customer=self.customer,
+            description='Test order',
+            law_type='44_FZ',
+            contract_amount=100000.00,
+            okpd2='29.10',
+            delivery_region='Москва'
+        )
+        self.supplier_obj = Supplier.objects.create(
+            user=self.supplier,
+            full_name='Test Supplier',
+            short_name='TS',
+            inn='1234567890',
+            ogrn='1234567890123',
+            okpo='12345678',
+            okved='29.10',
+            judicial_address='Test Address'
+        )
+
+    def test_order_serializer(self):
+        """Test order serializer"""
+        from .serializers import OrderSerializer
+        serializer = OrderSerializer(self.order)
+        self.assertEqual(serializer.data['description'], 'Test order')
+        self.assertEqual(serializer.data['law_type'], '44_FZ')
+        self.assertEqual(float(serializer.data['contract_amount']), 100000.00)
+
+    def test_supplier_serializer(self):
+        """Test supplier serializer"""
+        from .serializers import SupplierSerializer
+        serializer = SupplierSerializer(self.supplier_obj)
+        self.assertEqual(serializer.data['full_name'], 'Test Supplier')
+        self.assertEqual(serializer.data['inn'], '1234567890')
+        self.assertEqual(serializer.data['okved'], '29.10')
+
+
+class PermissionTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.customer = User.objects.create_user(
+            email='test@example.com',
+            password='testpass123',
+            role='customer'
+        )
+        self.supplier = User.objects.create_user(
+            email='supplier@example.com',
+            password='testpass123',
+            role='supplier'
+        )
+        self.admin = User.objects.create_superuser(
+            email='admin@example.com',
+            password='testpass123'
+        )
+        self.order = Order.objects.create(
+            customer=self.customer,
+            description='Test order',
+            law_type='44_FZ',
+            contract_amount=100000.00,
+            okpd2='29.10',
+            delivery_region='Москва'
+        )
+
+    def test_customer_permissions(self):
+        """Test customer permissions"""
+        from .permissions import IsCustomerPermission
+        permission = IsCustomerPermission()
+        
+        # Test with customer
+        request = type('Request', (), {'user': self.customer})()
+        self.assertTrue(permission.has_permission(request, None))
+        
+        # Test with supplier
+        request = type('Request', (), {'user': self.supplier})()
+        self.assertFalse(permission.has_permission(request, None))
+        
+        # Test with admin
+        request = type('Request', (), {'user': self.admin})()
+        self.assertFalse(permission.has_permission(request, None))
+
+    def test_supplier_permissions(self):
+        """Test supplier permissions"""
+        from .permissions import IsSupplierPermission
+        permission = IsSupplierPermission()
+        
+        # Test with supplier
+        request = type('Request', (), {'user': self.supplier})()
+        self.assertTrue(permission.has_permission(request, None))
+        
+        # Test with customer
+        request = type('Request', (), {'user': self.customer})()
+        self.assertFalse(permission.has_permission(request, None))
+        
+        # Test with admin
+        request = type('Request', (), {'user': self.admin})()
+        self.assertFalse(permission.has_permission(request, None))
+
+    def test_admin_permissions(self):
+        """Test admin permissions"""
+        from .permissions import IsAdminPermission
+        permission = IsAdminPermission()
+        
+        # Test with admin
+        request = type('Request', (), {'user': self.admin})()
+        self.assertTrue(permission.has_permission(request, None))
+        
+        # Test with customer
+        request = type('Request', (), {'user': self.customer})()
+        self.assertFalse(permission.has_permission(request, None))
+        
+        # Test with supplier
+        request = type('Request', (), {'user': self.supplier})()
+        self.assertFalse(permission.has_permission(request, None))
+
+
+class EmailTests(TestCase):
+    def setUp(self):
+        self.supplier = User.objects.create_user(
+            email='supplier@example.com',
+            password='testpass123',
+            role='supplier'
+        )
+        self.supplier_obj = Supplier.objects.create(
+            user=self.supplier,
+            full_name='Test Supplier',
+            short_name='TS',
+            inn='1234567890',
+            ogrn='1234567890123',
+            okpo='12345678',
+            okved='29.10',
+            judicial_address='Test Address',
+            email='supplier@example.com'
+        )
+        self.subscription = SupplierSubscription.objects.create(
+            supplier=self.supplier,
+            okpd2='29.10'
+        )
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_send_order_notification(self):
+        from .utils import send_order_notifications
+        
+        order_details = {
+            'description': 'Test order',
+            'law_type': '44_FZ',
+            'contract_amount': 100000.00,
+            'okpd2': '29.10',
+            'delivery_region': 'Москва'
+        }
+        
+        send_order_notifications(order_details)
+        
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].subject, "Новый заказ, который может вас заинтересовать")
+        self.assertEqual(mail.outbox[0].to, ['supplier@example.com'])
+        self.assertIn('Test order', mail.outbox[0].body)
+        self.assertIn('44_FZ', mail.outbox[0].body)
+        self.assertIn('100000.00', mail.outbox[0].body)
+        self.assertIn('29.10', mail.outbox[0].body)
+        self.assertIn('Москва', mail.outbox[0].body)
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_send_order_notification_no_subscribers(self):
+        from .utils import send_order_notifications
+        
+        order_details = {
+            'description': 'Test order',
+            'law_type': '44_FZ',
+            'contract_amount': 100000.00,
+            'okpd2': '29.20',  # Нет подписчиков на этот ОКПД2
+            'delivery_region': 'Москва'
+        }
+        
+        send_order_notifications(order_details)
+        self.assertEqual(len(mail.outbox), 0)
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_send_order_notification_no_email(self):
+        from .utils import send_order_notifications
+        
+        # Удаляем email у поставщика
+        self.supplier_obj.email = None
+        self.supplier_obj.save()
+        
+        order_details = {
+            'description': 'Test order',
+            'law_type': '44_FZ',
+            'contract_amount': 100000.00,
+            'okpd2': '29.10',
+            'delivery_region': 'Москва'
+        }
+        
+        send_order_notifications(order_details)
+        self.assertEqual(len(mail.outbox), 0)
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_send_order_notification_missing_okpd2(self):
+        from .utils import send_order_notifications
+        
+        order_details = {
+            'description': 'Test order',
+            'law_type': '44_FZ',
+            'contract_amount': 100000.00,
+            'delivery_region': 'Москва'
+            # Отсутствует okpd2
+        }
+        
+        send_order_notifications(order_details)
+        self.assertEqual(len(mail.outbox), 0)

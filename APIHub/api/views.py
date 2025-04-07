@@ -52,6 +52,7 @@ class ListCreateOrderAPIView(ListCreateAPIView):
             logger.info(f"Уведомления успешно отправлены для заказа ID {order.id}")
         except Exception as e:
             logger.error(f"Ошибка при отправке уведомлений для заказа ID {order.id}: {str(e)}", exc_info=True)
+            # Не прерываем выполнение, так как заказ уже создан
 
 list_create_order_view = ListCreateOrderAPIView.as_view()
 

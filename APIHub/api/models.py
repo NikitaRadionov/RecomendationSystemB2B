@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.core.exceptions import ValidationError
+from django.core.validators import EmailValidator
 
 
 class UserManager(BaseUserManager):
@@ -205,15 +206,25 @@ class Supplier(models.Model):
         ("Казенные учреждения", "Казенные учреждения")
     ]
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='suppliers', verbose_name="Владелец записи")
+    user = models.OneToOneField(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='supplier_profile',
+        verbose_name="Пользователь"
+    )
 
     full_name = models.TextField(verbose_name="Полное наименование")
-    short_name = models.TextField(blank=True, null=True, verbose_name="Краткое наименование")
-    short_name_english = models.TextField(blank=True, null=True, verbose_name="Краткое наименование (английский)")
+    short_name = models.TextField(blank=True, null=True, verbose_name="Сокращенное наименование")
+    short_name_english = models.TextField(blank=True, null=True, verbose_name="Сокращенное наименование на английском")
 
     judicial_address = models.TextField(blank=True, null=True, verbose_name="Юридический адрес")
 
-    email = models.EmailField(blank=True, null=True, verbose_name="Электронная почта")
+    email = models.EmailField(
+        blank=True, 
+        null=True, 
+        validators=[EmailValidator(message="Введите корректный email адрес")],
+        verbose_name="Email"
+    )
     leader = models.TextField(blank=True, null=True, verbose_name="Руководитель")
 
 
@@ -245,6 +256,20 @@ class Supplier(models.Model):
             return "Высокий риск"
         return None
 
+    def clean(self):
+        super().clean()
+        if self.email and not self.user.email:
+            self.user.email = self.email
+            self.user.save()
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    class Meta:
+        verbose_name = "Поставщик"
+        verbose_name_plural = "Поставщики"
+        ordering = ['full_name']
 
 
 class SupplierSubscription(models.Model):
