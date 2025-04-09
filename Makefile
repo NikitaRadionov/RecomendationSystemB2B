@@ -8,6 +8,9 @@ build_and_up:
 	docker-compose build
 	docker-compose up -d
 
+stop:
+	docker-compose stop
+
 down:
 	docker-compose down
 
