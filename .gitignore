@@ -2,3 +2,4 @@ logs/
 dbdata/
 __pycache__/
 mytests.py
+.env

@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.core.exceptions import ValidationError
+from django.core.validators import EmailValidator
 
 
 class UserManager(BaseUserManager):
@@ -35,7 +36,6 @@ class UserManager(BaseUserManager):
         user.set_password(password)
         user.save(using=self._db)
         return user
-
 
 
 class User(AbstractBaseUser, PermissionsMixin):
@@ -183,7 +183,6 @@ class Order(models.Model):
         return f"Заказ от {self.customer.name or self.customer.email} ({self.law_type})"
     
 
-
 class Supplier(models.Model):
 
     OKFS_CHOICES = [
@@ -213,7 +212,7 @@ class Supplier(models.Model):
 
     judicial_address = models.TextField(blank=True, null=True, verbose_name="Юридический адрес")
 
-    email = models.EmailField(blank=True, null=True, verbose_name="Электронная почта")
+    email = models.EmailField(blank=True, null=True, validators=[EmailValidator(message="Введите корректный email адрес")], verbose_name="Электронная почта")
     leader = models.TextField(blank=True, null=True, verbose_name="Руководитель")
 
 
@@ -244,7 +243,6 @@ class Supplier(models.Model):
         elif 71 <= self.index_due_diligence <= 99:
             return "Высокий риск"
         return None
-
 
 
 class SupplierSubscription(models.Model):

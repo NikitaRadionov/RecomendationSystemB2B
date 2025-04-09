@@ -21,7 +21,6 @@ class UserSerializer(BaseUserCreateSerializer):
         return value
 
     def create(self, validated_data):
-        print('Я захожу сюда')
         try:
             return User.objects.create_user(**validated_data)
         except DjangoValidationError as e:

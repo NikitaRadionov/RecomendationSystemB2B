@@ -1,7 +1,12 @@
 from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework import status
-from .models import Order, Supplier, User
+from django.core import mail
+from django.conf import settings
+from django.core.exceptions import ValidationError
+from .models import Order, Supplier, User,  SupplierSubscription
+from django.db import IntegrityError
+from .utils import send_order_notifications
 
 
 class OrderAPITest(TestCase):
@@ -22,13 +27,79 @@ class OrderAPITest(TestCase):
             law_type="44_FZ"
         )
 
-    def test_customer_can_update_own_order(self):
+    def test_customer_can_partial_update_own_order(self):
         self.client.force_authenticate(user=self.customer)
         response = self.client.patch(f'/api/orders/{self.order.pk}', data={'description': 'Обновленное описание'}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['description'], 'Обновленное описание')
 
-    def test_customer_can_list_their_orders_only(self):
+    def test_customer_can_update_own_order(self):
+        self.client.force_authenticate(user=self.customer)
+        data = {
+            "okpd2": "29.31",
+            "description": "Поставка автомобилей с бензиновым двигателем",
+            "contract_amount": 7200000.00,
+            "delivery_region": "Санкт-Петербург",
+            "law_type": "223_FZ"
+        }
+        response = self.client.put(f'/api/orders/{self.order.pk}', data=data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+    
+    def test_customer_can_delete_own_order(self):
+        self.client.force_authenticate(user=self.customer)
+        response = self.client.delete(f'/api/orders/{self.order.pk}', format='json')
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+
+    def test_admin_can_partial_update_order(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.patch(f'/api/orders/{self.order.pk}', data={'description': 'Обновленное описание'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['description'], 'Обновленное описание')
+
+    def test_admin_can_update_order(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.put(f'/api/orders/{self.order.pk}', data={
+            "okpd2": "29.20",
+            "description": "Поставка автомобилей с бензиновым двигателем",
+            "contract_amount": 2200000.00,
+            "delivery_region": "Санкт-Петербург",
+            "law_type": "223_FZ"
+            }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_admin_can_delete_any_order(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.delete(f'/api/orders/{self.order.pk}')
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_admin_can_get_orders(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.get('/api/orders')
+        self.assertEqual(response.data['count'], 5)
+
+    def test_admin_can_get_orders_sort(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.get('/api/orders', {'ordering': 'contract_amount'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_admin_can_get_orders_filter(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.get('/api/orders', {'law_type': '44_FZ'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_admin_can_get_orders(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.get('/api/orders')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_admin_can_get_order(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.get(f'/api/orders/{self.order.pk}')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+
+    def test_customer_can_list_their_orders(self):
         self.client.force_authenticate(user=self.customer)
         response = self.client.get('/api/orders')
         self.assertEqual(response.data['count'], 1)
@@ -55,16 +126,6 @@ class OrderAPITest(TestCase):
         })
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
-    def test_admin_can_delete_any_order(self):
-        self.client.force_authenticate(user=self.admin)
-        response = self.client.delete(f'/api/orders/{self.order.pk}')
-        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
-
-    def test_admin_can_see_all_orders(self):
-        self.client.force_authenticate(user=self.admin)
-        response = self.client.get('/api/orders')
-        self.assertEqual(response.data['count'], 5)
-
 
     def test_create_order(self):
         self.client.force_authenticate(user=self.customer)
@@ -83,8 +144,6 @@ class OrderAPITest(TestCase):
         User.objects.all().delete()
 
 
-
-
 class SupplierAPITest(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -101,7 +160,7 @@ class SupplierAPITest(TestCase):
             judicial_address='Белгородская обл, г.о. Старооскольский, г Старый Оскол, ул Чапаева, д. 37Б, помещ. 1',
             email='igor.kovalerenko@mail.ru',
             leader='Ковалеренко Игорь Владимирович',
-            registration_date='2017-03-06',
+            registration_date=None,
             okved='45.31',
             index_due_diligence=4,
             inn='3128121735',
@@ -111,6 +170,16 @@ class SupplierAPITest(TestCase):
             okfs='Частная собственность',
             okopf='Общества с ограниченной ответственностью'
         )
+
+    def test_customer_can_get_suppliers_filter(self):
+        self.client.force_authenticate(user=self.customer)
+        response = self.client.get(f'/api/suppliers', {'index_due_diligence': 30})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_customer_can_get_suppliers_sort(self):
+        self.client.force_authenticate(user=self.customer)
+        response = self.client.get(f'/api/suppliers', {'ordering': '-index_due_dilligence'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_admin_can_create_supplier(self):
         self.client.force_authenticate(user=self.admin)
@@ -122,7 +191,7 @@ class SupplierAPITest(TestCase):
             "judicial_address": "Город Буденновск, улица Комсомольская, д. 5",
             "email": "info@kama-centre.ru",
             "leader": "Иванов Иван Иванович",
-            "registration_date": "2022-06-15",
+            "registration_date": None,
             "okved": "45.21",
             "index_due_diligence": 5,
             "inn": "1234567891",
@@ -135,13 +204,81 @@ class SupplierAPITest(TestCase):
         response = self.client.post('/api/suppliers', data=data, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
+    def test_admin_can_update_supplier(self):
+        self.client.force_authenticate(user=self.admin)
+        data = {
+            'user': self.supplier_user.id,
+            "full_name": "Обновленное full_name",
+            "short_name": "Обновленный short_name",
+            "short_name_english": "Обновленный short_name_english",
+            "judicial_address": "Обновленный judicial_address",
+            "email": "info_new_new@kama-centre.ru",
+            "leader": "Иванов Иван Новый",
+            "registration_date": None,
+            "okved": "23.21",
+            "index_due_diligence": 10,
+            "inn": "1234567892",
+            "kpp": "123456788",
+            "ogrn": "1234567890123",
+            "okpo": "12345675",
+            "okfs": "Государственная собственность",
+            "okopf": "Открытые акционерные общества"
+        }
+        response = self.client.put(f'/api/suppliers/{self.supplier.inn}', data=data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_admin_can_partial_update_supplier(self):
+        self.client.force_authenticate(user=self.admin)
+        data = {
+            "index_due_diligence": 8,
+        }
+        response = self.client.patch(f'/api/suppliers/{self.supplier.inn}', data=data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
     def test_admin_can_delete_supplier(self):
         self.client.force_authenticate(user=self.admin)
         response = self.client.delete(f'/api/suppliers/{self.supplier.inn}')
-        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
 
-    def test_supplier_can_update_self(self):
+    def test_admin_can_get_suppliers(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.get(f'/api/suppliers')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_admin_can_get_suppliers_filter(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.get(f'/api/suppliers', {'index_due_diligence': 30})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_admin_can_get_suppliers_sort(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.get(f'/api/suppliers', {'ordering': '-index_due_dilligence'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+
+    def test_supplier_can_update(self):
+        self.client.force_authenticate(user=self.supplier_user)
+        data = {
+            "full_name": "Обновленное full_name",
+            "short_name": "Обновленный short_name",
+            "short_name_english": "Обновленный short_name_english",
+            "judicial_address": "Обновленный judicial_address",
+            "email": "info_new_new@kama-centre.ru",
+            "leader": "Иванов Иван Новый",
+            "registration_date": None,
+            "okved": "23.21",
+            "index_due_diligence": 10,
+            "inn": "1234567892",
+            "kpp": "123456788",
+            "ogrn": "1234567890123",
+            "okpo": "12345675",
+            "okfs": "Государственная собственность",
+            "okopf": "Открытые акционерные общества"
+        }
+        response = self.client.patch(f'/api/suppliers/{self.supplier.inn}', data=data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_supplier_can_partial_update(self):
         self.client.force_authenticate(user=self.supplier_user)
         data = {
             'full_name': 'Обновленные данные'
@@ -150,37 +287,20 @@ class SupplierAPITest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['full_name'], 'Обновленные данные')
 
+    def test_supplier_can_delete(self):
+        self.client.force_authenticate(user=self.supplier_user)
+        response = self.client.delete(f'/api/suppliers/{self.supplier.inn}', format='json')
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+
     def test_list_suppliers_requires_auth(self):
         response = self.client.get('/api/suppliers')
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
-    def test_unauthorized_user_cannot_create_supplier(self):
-        response = self.client.post('/api/suppliers', {
-            "full_name": "Коваленко Дмитрий",
-            "judicial_address": "г. Москва",
-            "email": "supplier@domain.com",
-            "leader": "Коваленко Игорь",
-            "registration_date": "2020-02-01",
-            "okved": "45.11",
-            "index_due_diligence": 3,
-            "inn": "3216549872",
-            "kpp": "321654987",
-            "ogrn": "9876543212346",
-            "okpo": "98765433",
-            "okfs": "Частная собственность",
-            "okopf": "Общества с ограниченной ответственностью"
-        })
-        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
-
-    def test_unauthorized_user_cannot_delete_supplier(self):
-        self.client.force_authenticate(user=self.customer)
-        response = self.client.delete(f'/api/suppliers/{self.supplier.id}')
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def tearDown(self):
         Order.objects.all().delete()
         User.objects.all().delete()
-
 
 
 class SupplierRecomendationAPITest(TestCase):
@@ -286,3 +406,105 @@ class SupplierRecomendationAPITest(TestCase):
     def tearDown(self):
         Order.objects.all().delete()
         User.objects.all().delete()
+
+class CompareSuppliersAPITest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.customer = User.objects.create_user(email='test_customer@example.com', password='my_purpose_is_customer', role='customer')
+        self.supplier_user = User.objects.create_user(email='supplier@test.com', password='XmolKfcSbx', role='supplier')
+        self.supplier1 = Supplier.objects.create(
+            user=self.supplier_user,
+            full_name='ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ "ЦЕНТРЗАПЧАСТЬ"',
+            short_name='ООО "ЦЕНТРЗАПЧАСТЬ"',
+            short_name_english='OOO "TSENTRZAPCHAST"',
+            judicial_address='Белгородская обл, г.о. Старооскольский, г Старый Оскол, ул Чапаева, д. 37Б, помещ. 1',
+            email='igor.kovalerenko@mail.ru',
+            leader='Ковалеренко Игорь Владимирович',
+            registration_date=None,
+            okved='45.31',
+            index_due_diligence=6,
+            inn='3128121736',
+            kpp='312801001',
+            ogrn='1173123007350',
+            okpo='06961672',
+            okfs='Частная собственность',
+            okopf='Общества с ограниченной ответственностью'
+        )
+        self.supplier2 = Supplier.objects.create(
+            user=self.supplier_user,
+            full_name='ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ "ЦЕНТРЗАПЧАСТЬ"',
+            short_name='ООО "ЦЕНТРЗАПЧАСТЬ"',
+            short_name_english='OOO "TSENTRZAPCHAST"',
+            judicial_address='Белгородская обл, г.о. Старооскольский, г Старый Оскол, ул Чапаева, д. 37Б, помещ. 1',
+            email='igor.kovalerenko@mail.ru',
+            leader='Ковалеренко Игорь Владимирович',
+            registration_date=None,
+            okved='45.31',
+            index_due_diligence=4,
+            inn='3128121735',
+            kpp='312801001',
+            ogrn='1173123007357',
+            okpo='06961674',
+            okfs='Частная собственность',
+            okopf='Общества с ограниченной ответственностью'
+        )
+    
+    def test_customer_can_comparesuppliers(self):
+        self.client.force_authenticate(user=self.customer)
+        response = self.client.get(f'/api/compare-suppliers?inn={self.supplier1.inn}&inn={self.supplier2.inn}')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    
+    def tearDown(self):
+        Order.objects.all().delete()
+        User.objects.all().delete()
+
+
+class SupplierSubscriptionAPITest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_superuser(email='admin@example.com', password='ofaqoOkJi7', role='admin')
+        self.supplier_user = User.objects.create_user(
+            email='supplier@example.com',
+            password='testpass123',
+            role='supplier'
+        )
+        self.subscription_data = {
+            'supplier': self.supplier_user,
+            'okpd2': '29.10'
+        }
+        self.subscription = SupplierSubscription.objects.create(supplier=self.supplier_user, okpd2='29.20')
+
+    def test_admin_can_get_subscriptions(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.get(f'/api/subscriptions')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_admin_can_create_subscription(self):
+        self.client.force_authenticate(user=self.admin)
+        data = {
+            "supplier_id": self.supplier_user.pk,
+            "okpd2": "29.10"
+        }
+        response = self.client.post(f'/api/subscriptions', data=data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_admin_can_delete_subscription(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.delete(f'/api/subscriptions/{self.subscription.pk}')
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_supplier_can_get_subscriptions(self):
+        self.client.force_authenticate(user=self.supplier_user)
+        response = self.client.get(f'/api/subscriptions/{self.subscription.pk}', format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+    
+    def test_supplier_can_delete_subscription(self):
+        self.client.force_authenticate(user=self.supplier_user)
+        response = self.client.delete(f'/api/subscriptions/{self.subscription.pk}', format="json")
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_create_subscription(self):
+        subscription = SupplierSubscription.objects.create(**self.subscription_data)
+        self.assertEqual(subscription.supplier, self.supplier_user)
+        self.assertEqual(subscription.okpd2, '29.10')

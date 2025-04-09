@@ -33,7 +33,9 @@ class ListCreateOrderAPIView(ListCreateAPIView):
 
     def perform_create(self, serializer):
         try:
-            order = serializer.save(customer=self.request.user)
+            user = self.request.user
+            if user.role == "customer":
+                order = serializer.save(customer=self.request.user)
             logger.info(f"Создан заказ ID {order.id} пользователем {self.request.user}")
         except Exception as e:
             logger.error(f"Ошибка при сохранении заказа: {str(e)}", exc_info=True)
@@ -91,7 +93,7 @@ class ListCreateSupplierAPIView(ListCreateAPIView):
     filterset_fields = ['full_name', 'short_name', 
                         'registration_date', 'okved', 'inn', 'ogrn', 'index_due_diligence']
     
-    search_fields = ['full_name', 'short_name', 'inn', 'ogrn']
+    search_fields = ['full_name', 'short_name', 'region', 'inn', 'ogrn']
     
     ordering_fields = ['registration_date', 'index_due_diligence']
 
@@ -134,7 +136,7 @@ rud_supplier_view = RUDSupplierAPIView.as_view()
 
 class SupplierRecommendationView(APIView):
 
-    permission_classes = [IsCustomerPermission|IsAdminPermission]
+    permission_classes = [IsCustomerPermission]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -195,7 +197,7 @@ class SupplierRecommendationView(APIView):
 recomendation_view = SupplierRecommendationView.as_view()
 
 class OrderRecommendationView(APIView):
-    permission_classes = [IsCustomerPermission | IsAdminPermission]
+    permission_classes = [IsCustomerPermission]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -284,8 +286,9 @@ class SupplierSubscriptionListCreateView(ListCreateAPIView):
                         logger.info(f"Администратор {self.request.user} добавил подписку для поставщика ID {supplier_id}")
                         serializer.save(supplier=supplier)
                         return
-            logger.info(f"Поставщик {self.request.user} создал подписку")
-            serializer.save(supplier=self.request.user)
+            else:
+                logger.info(f"Поставщик {self.request.user} создал подписку")
+                serializer.save(supplier=self.request.user)
         except Exception as e:
             logger.error(f"Ошибка при создании подписки: {str(e)}", exc_info=True)
             raise
@@ -317,6 +320,9 @@ retrieve_destroy_subscription_view = SupplierSubscriptionRetrieveDestroyView.as_
 
 
 class CompareSuppliersView(APIView):
+
+    permission_classes = [IsCustomerPermission]
+
     def get(self, request):
         supplier_inns = request.query_params.getlist("inn")
         if len(supplier_inns) != 2:
@@ -361,7 +367,7 @@ compare_suppliers_view = CompareSuppliersView.as_view()
 
 class RecommendationHistoryView(ListAPIView):
     serializer_class = RecommendationHistorySerializer
-    permission_classes = [IsCustomerPermission|IsAdminPermission]
+    permission_classes = [IsCustomerPermission]
 
     def get_queryset(self):
         return RecommendationHistory.objects.filter(user=self.request.user)
